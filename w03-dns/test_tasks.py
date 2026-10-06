@@ -74,8 +74,10 @@ def test_task2():
                             "-e", "dns.flags.response"],
                            capture_output=True, text=True)
         rows = [l for l in r.stdout.splitlines() if l.strip()]
-        q = sum(1 for l in rows if l.strip() == "0")
-        a = sum(1 for l in rows if l.strip() == "1")
+        # Wireshark versions differ: boolean fields may be emitted as 0/1
+        # or False/True by `tshark -T fields`.
+        q = sum(1 for l in rows if l.strip().lower() in {"0", "false"})
+        a = sum(1 for l in rows if l.strip().lower() in {"1", "true"})
         if q and a:
             record(2, "capture has queries and responses", PASS, f"{q} queries, {a} responses")
         else:

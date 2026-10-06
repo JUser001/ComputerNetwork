@@ -74,10 +74,21 @@ class YourCache:
 
     def __init__(self, upstream):
         self.upstream = upstream
-        raise NotImplementedError("write your cache")
+        # name -> (address, expires_at). Dictionary lookup is constant time;
+        # expiration is based on the authoritative TTL, not a fixed lifetime.
+        self.entries = {}
 
     def lookup(self, name, now):
-        raise NotImplementedError("write your cache")
+        entry = self.entries.get(name)
+        if entry is not None:
+            address, expires_at = entry
+            if now < expires_at:
+                return address
+            del self.entries[name]
+
+        address, ttl = self.upstream(name)
+        self.entries[name] = (address, now + max(0, ttl))
+        return address
 
     def stats(self):
-        return {}
+        return {"entries": len(self.entries)}
