@@ -67,31 +67,78 @@ class Sender:
     why in observation.md.
     """
 
+    TIMEOUT_STEPS = 6
+
     def __init__(self, data_channel, ack_channel, data):
-        raise NotImplementedError("write your sender")
+        self.data_channel = data_channel
+        self.ack_channel = ack_channel
+        self.chunks = [data[i:i + PAYLOAD] for i in range(0, len(data), PAYLOAD)]
+        self.next_seq = 0
+        self.last_sent_at = None
+        self.clock = 0
 
     def step(self):
-        """Do one unit of work. Return False when you believe you are done."""
-        raise NotImplementedError
+        """Run one stop-and-wait step; ignore stale or unrelated ACKs."""
+        if self.next_seq >= len(self.chunks):
+            return False
+
+        # ACKs are cumulative: ACK n confirms that n has been received in order.
+        ack = self.ack_channel.receive()
+        if (isinstance(ack, tuple) and len(ack) == 2 and ack[0] == "ACK"
+                and ack[1] == self.next_seq):
+            self.next_seq += 1
+            self.last_sent_at = None
+            if self.next_seq >= len(self.chunks):
+                self.clock += 1
+                return False
+
+        # First transmission, or timeout: retransmit the same numbered segment.
+        if (self.last_sent_at is None or
+                self.clock - self.last_sent_at >= self.TIMEOUT_STEPS):
+            seq = self.next_seq
+            self.data_channel.send(("DATA", seq, self.chunks[seq]))
+            self.last_sent_at = self.clock
+
+        self.clock += 1
+        return True
 
 
 class Receiver:
-    """Your receiver. Hands back the reassembled bytes via `.data()`."""
+    """Receiver with in-order reassembly and duplicate suppression."""
 
     def __init__(self, data_channel, ack_channel):
-        raise NotImplementedError("write your receiver")
+        self.data_channel = data_channel
+        self.ack_channel = ack_channel
+        self.expected_seq = 0
+        self.buffer = bytearray()
 
     def step(self):
-        raise NotImplementedError
+        packet = self.data_channel.receive()
+        if packet is None:
+            return
+        if not (isinstance(packet, tuple) and len(packet) == 3 and packet[0] == "DATA"):
+            return
+
+        _, seq, payload = packet
+        if not isinstance(seq, int) or not isinstance(payload, bytes):
+            return
+
+        if seq == self.expected_seq:
+            self.buffer.extend(payload)
+            self.expected_seq += 1
+        # For duplicates and unexpected packets, repeat the latest cumulative ACK.
+        # In particular, never append seq < expected_seq a second time.
+        self.ack_channel.send(("ACK", self.expected_seq - 1))
 
     def data(self):
         """The bytes reassembled so far."""
-        raise NotImplementedError
+        return bytes(self.buffer)
 
 
 # ------------------------------------------------------------------- harness
 def verify(seed=246, size=2000, max_steps=200_000):
-    original = bytes(random.Random(seed).getrandbits(8) for _ in range(size))
+    source_rng = random.Random(seed)
+    original = bytes(source_rng.getrandbits(8) for _ in range(size))
     up, down = UnreliableChannel(seed), UnreliableChannel(seed + 1)
 
     # Data goes out over `up`, ACKs come back over `down`. Both are unreliable.

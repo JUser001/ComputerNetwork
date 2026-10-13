@@ -28,7 +28,8 @@ def one_run():
     """One transfer. Returns (seconds, bytes, curl's own timing breakdown)."""
     fmt = "%{time_namelookup} %{time_connect} %{time_starttransfer} %{time_total} %{size_download}"
     r = subprocess.run(
-        ["curl", "-s", "-o", os.devnull, "-w", fmt, TARGET],
+        ["curl", "-sS", "--connect-timeout", "10", "--max-time", "60",
+         "-o", os.devnull, "-w", fmt, TARGET],
         capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(f"curl failed: {r.stderr.strip() or r.returncode}")
@@ -71,6 +72,11 @@ def main():
         "mbps_max": max(mbps),
         "handshake_ms_median": statistics.median(
             r["connect_s"] * 1000 for r in runs),
+        "mbps_spread_mbps": max(mbps) - min(mbps),
+        "mbps_spread_relative": (
+            (max(mbps) - min(mbps)) / statistics.median(mbps)
+            if statistics.median(mbps) else 0
+        ),
     }
 
     path = os.path.join(OUT, "throughput.json")

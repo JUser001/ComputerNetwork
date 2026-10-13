@@ -53,12 +53,38 @@ class YourControl:
       That distinction has a name in the textbook.
     """
 
+    # The bandwidth-delay product is 1 packet/slot * 20 slots = 20 packets.
+    # A small amount of queueing headroom keeps the link busy without filling it.
+    MAX_WINDOW = 24.0
+    INITIAL_SSTHRESH = 12.0
+    BACKOFF = 0.80
+
     def __init__(self):
-        self.window = 1
-        raise NotImplementedError("write your congestion control")
+        self.window = 1.0
+        self.ssthresh = self.INITIAL_SSTHRESH
+        # A single timeout can expose several packets dropped in one burst.
+        # Treat losses within one window of ACK progress as one congestion event.
+        self.acks_since_loss = 10**9
+        self.loss_recovery_acks = 1
 
     def on_ack(self):
-        raise NotImplementedError
+        if self.window < self.ssthresh:
+            # Slow start: roughly doubles the window every RTT.
+            self.window += 1.0
+        else:
+            # Congestion avoidance: additive increase of about one packet/RTT.
+            self.window += 1.0 / max(self.window, 1.0)
+
+        self.window = min(self.window, self.MAX_WINDOW)
+        self.acks_since_loss += 1
 
     def on_loss(self):
-        raise NotImplementedError
+        # Several timed-out packets may be reported back-to-back by the harness.
+        # Do not multiply-backoff repeatedly for the same loss burst.
+        if self.acks_since_loss < max(self.loss_recovery_acks, 20):
+            return
+
+        self.window = max(2.0, self.window * self.BACKOFF)
+        self.ssthresh = self.window
+        self.loss_recovery_acks = max(1, int(self.window))
+        self.acks_since_loss = 0
