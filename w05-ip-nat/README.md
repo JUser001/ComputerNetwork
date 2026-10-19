@@ -53,3 +53,12 @@ python3 ../check.py w05
   to miss. If you cannot catch one, use the official **DHCP trace** in `traces/`.
   You still need two networks for the address half
 - **Task 3** — unaffected. Fully synthetic
+
+---
+
+## Current one-network variant status
+
+- **Task 1:** implementation completed; `--verify` reports 10/10 cases.
+- **Task 2:** intentionally limited to one observed interface from the remote execution sandbox (not the student's PC). Public-IP lookup failed. No second-network comparison is fabricated. The bundled `out/dhcp.pcapng` is a synthetic example, not a live/official trace, so Task 2 is not a full pass.
+- **Task 3:** implementation completed; 20,000/20,000 answers match the linear reference in the recorded benchmark, with timing varying by run.
+- Run `python3 test_tasks.py` to see the integrated result. The Task 2 checks are expected to flag the missing second network and public address, and packet inspection may be skipped if `tshark` is absent. `check.py` was not included in the supplied files, so that separate checker cannot be run from this ZIP.
