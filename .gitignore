@@ -1,5 +1,10 @@
-# 학생 제출물은 저장소에 올라가지 않습니다
+# 기본적으로 실험 출력 폴더는 저장소에서 제외합니다.
 */out/
+# Week 6 결과는 GitHub 제출용이므로 추적 허용
+!w06-routing/out/
+!w06-routing/out/**
+# An earlier misspelled traceroute capture is not a submission artifact
+w06-routing/out/traceoute.txt
 # 캡처 파일 - 개인정보가 들어갈 수 있음
 *.pcap
 *.pcapng

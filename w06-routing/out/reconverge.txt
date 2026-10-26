@@ -1,0 +1,3 @@
+Link failure: R1 OSPF route changed after about 1 seconds
+Link restoration: R1 OSPF route changed after about 1 seconds
+OSPF cost change: R1 OSPF route changed after about 1 seconds
