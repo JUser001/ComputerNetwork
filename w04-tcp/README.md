@@ -26,7 +26,7 @@ Details and requirements are in **`task1.md`**, **`task2.md`**, **`task3.md`**.
 
 ```bash
 python3 task1_rdt.py --verify              # Task 1
-python3 task2_measure.py --label "campus"  # Task 2, once per network
+python3 task2_measure.py --label "Wi-Fi_now"  # Task 2, first sample
 python3 bench.py --yours                   # Task 3
 python3 test_tasks.py                      # all of it
 ```
@@ -49,8 +49,9 @@ python3 ../check.py w04
 ## Path (B) · when measurement is blocked
 
 - **Task 1** — unaffected. The channel is simulated
-- **Task 2** — if you cannot capture, use the official **Wireshark Lab: Exploring TCP**
-  trace in `traces/`. You still need two networks for the throughput half; phone
-  tethering counts. If you truly have one network, measure at two very different
-  times of day instead and say so
+- **Task 2** — if only one network and limited time are available, see
+  `TASK2_NOW_AND_10MIN.md` for the explicitly disclosed 10-minute fallback. It may
+  not satisfy the intended time-of-day comparison and could receive a deduction.
+  If capture is blocked, use the official **Wireshark Lab: Exploring TCP** trace
+  and state clearly that it is not your own traffic.
 - **Task 3** — unaffected. Fully simulated
