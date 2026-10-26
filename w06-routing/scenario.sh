@@ -1,77 +1,94 @@
 #!/usr/bin/env bash
-# 6주차 - OSPF 재수렴 관찰
-#
-#   bash w06-routing/scenario.sh up        토폴로지 올리기
-#   bash w06-routing/scenario.sh routes    라우팅 표 보기
-#   bash w06-routing/scenario.sh cut       링크 끊고 재수렴 시간 재기
-#   bash w06-routing/scenario.sh restore   링크 복구
-#   bash w06-routing/scenario.sh cost      링크 비용 바꾸기
-#   bash w06-routing/scenario.sh down      정리
-set -u
-SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-cd "$(dirname "$0")/.." || exit 1
-OUT="w06-routing/out"; mkdir -p "$OUT"
-DC="docker compose --profile routing"
+set -euo pipefail
+
+# Run this script from the repository root. Docker Compose controls the three
+# FRR routers, while this script records their OSPF routes around each change.
+COMPOSE=(docker compose --profile routing)
+OUT="w06-routing/out"
+mkdir -p "$OUT"
+
+capture_routes() {
+  local destination="$1"
+  : > "$destination"
+  for router in r1 r2 r3; do
+    {
+      printf '===== %s =====\n' "$router"
+      "${COMPOSE[@]}" exec -T "$router" vtysh -c 'show ip route ospf' 2>/dev/null || true
+      printf '\n'
+    } >> "$destination"
+  done
+}
+
+# Ignore route age fields, which change every second even when routing is stable.
+r1_snapshot() {
+  "${COMPOSE[@]}" exec -T r1 vtysh -c 'show ip route ospf' 2>/dev/null \
+    | sed -E 's/, [0-9]{2}:[0-9]{2}:[0-9]{2}//g'
+}
+
+wait_for_change() {
+  local previous="$1" start="$2" label="$3" elapsed current
+  for elapsed in $(seq 1 60); do
+    sleep 1
+    current="$(r1_snapshot)"
+    if [[ "$current" != "$previous" ]]; then
+      printf '%s: R1 OSPF route changed after about %s seconds\n' "$label" "$elapsed"
+      return 0
+    fi
+  done
+  printf '%s: no R1 route change detected within 60 seconds\n' "$label" >&2
+  return 1
+}
 
 case "${1:-}" in
   up)
-    $DC up -d
-    echo "라우터 3대를 올렸습니다. OSPF 인접 수립까지 30초쯤 기다리세요."
+    "${COMPOSE[@]}" up -d
+    echo 'Waiting 30 seconds for OSPF neighbors to form...'
     sleep 30
-    $DC exec -T r1 vtysh -c "show ip ospf neighbor"
+    for router in r1 r2 r3; do
+      echo "===== $router OSPF neighbors ====="
+      "${COMPOSE[@]}" exec -T "$router" vtysh -c 'show ip ospf neighbor' 2>/dev/null || true
+    done
     ;;
-
   routes)
-    for r in r1 r2 r3; do
-      echo "===== $r ====="
-      $DC exec -T $r vtysh -c "show ip route ospf"
-    done
+    capture_routes "$OUT/routes-current.txt"
+    cat "$OUT/routes-current.txt"
     ;;
-
   cut)
-    echo "== 끊기 전 =="
-    $DC exec -T r1 vtysh -c "show ip route ospf" | tee "$OUT/route-before.txt"
-
-    echo
-    echo "r1 의 eth1 (net_b, r1-r2 링크) 을 내립니다."
-    START=$(date +%s)
-    $DC exec -T r1 ip link set eth1 down
-
-    # 경로가 바뀔 때까지 1초 간격으로 확인
-    for i in $(seq 1 60); do
-      sleep 1
-      NOW=$($DC exec -T r1 vtysh -c "show ip route ospf" 2>/dev/null)
-      if [ "$NOW" != "$(cat "$OUT/route-before.txt")" ]; then
-        END=$(date +%s)
-        echo "재수렴 감지: $((END - START)) 초" | tee "$OUT/reconverge.txt"
-        echo "$NOW" | tee "$OUT/route-after.txt"
-        exit 0
-      fi
-    done
-    echo "60초 안에 경로가 바뀌지 않았습니다. dead interval 을 확인하세요." \
-      | tee "$OUT/reconverge.txt"
+    capture_routes "$OUT/route-before.txt"
+    before="$(r1_snapshot)"
+    start="$(date +%s)"
+    # In this lab, r1 eth1 is the link from r1 to r2.
+    "${COMPOSE[@]}" exec -T r1 ip link set eth1 down
+    wait_for_change "$before" "$start" 'Link failure' | tee "$OUT/reconverge.txt"
+    sleep 2
+    capture_routes "$OUT/route-after.txt"
+    echo "Saved all three routers' OSPF tables before and after the link failure."
     ;;
-
   restore)
-    $DC exec -T r1 ip link set eth1 up
-    echo "복구했습니다. 30초 뒤 routes 로 확인하세요."
+    before="$(r1_snapshot)"
+    start="$(date +%s)"
+    "${COMPOSE[@]}" exec -T r1 ip link set eth1 up
+    wait_for_change "$before" "$start" 'Link restoration' | tee -a "$OUT/reconverge.txt"
+    sleep 2
+    capture_routes "$OUT/route-restored.txt"
+    echo "Saved restored OSPF tables to $OUT/route-restored.txt"
     ;;
-
   cost)
-    echo "r1 의 eth0 (net_a) 비용을 10 에서 100 으로 올립니다."
-    $DC exec -T r1 vtysh -c "configure terminal" \
-                    -c "interface eth0" -c "ip ospf cost 100"
-    sleep 15
-    $DC exec -T r1 vtysh -c "show ip route ospf"
-    echo
-    echo "경로가 바뀌었는지 보세요. OSPF 는 홉 수가 아니라 비용으로 고릅니다."
+    capture_routes "$OUT/route-cost-before.txt"
+    before="$(r1_snapshot)"
+    start="$(date +%s)"
+    "${COMPOSE[@]}" exec -T r1 vtysh -c 'configure terminal' \
+      -c 'interface eth0' -c 'ip ospf cost 100' -c 'end' 2>/dev/null
+    wait_for_change "$before" "$start" 'OSPF cost change' | tee -a "$OUT/reconverge.txt"
+    sleep 2
+    capture_routes "$OUT/route-cost-after.txt"
+    echo "Saved all three routers' OSPF tables before and after the cost change."
     ;;
-
   down)
-    $DC down
+    "${COMPOSE[@]}" down
     ;;
-
   *)
-    sed -n '2,10p' "$SELF"
+    echo "Usage: bash w06-routing/scenario.sh {up|routes|cut|restore|cost|down}" >&2
+    exit 2
     ;;
 esac

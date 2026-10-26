@@ -14,6 +14,7 @@ in the packet. Build it.
     python3 task1_linkstate.py --verify
 """
 import argparse
+import heapq
 
 # Undirected weighted graph: node -> {neighbour: cost}
 TOPOLOGY = {
@@ -31,9 +32,32 @@ def dijkstra(graph, source):
 
     Return {node: cost}. Unreachable nodes must not appear.
 
-    You write the loop. `heapq` is allowed; `networkx` is not.
+    Equal-cost routes choose the lexicographically smallest first hop.
     """
-    raise NotImplementedError("implement Dijkstra")
+    if source not in graph:
+        return {}
+
+    best = {source: (0, None)}
+    queue = [(0, "", source)]
+    while queue:
+        cost, queued_hop, node = heapq.heappop(queue)
+        current_cost, current_hop = best[node]
+        if cost != current_cost or queued_hop != (current_hop or ""):
+            continue
+        for neighbour, weight in graph[node].items():
+            if neighbour == source:
+                continue
+            if weight < 0:
+                raise ValueError("Dijkstra requires non-negative link costs")
+            first_hop = neighbour if node == source else current_hop
+            candidate = (cost + weight, first_hop)
+            old = best.get(neighbour)
+            if (old is None or candidate[0] < old[0] or
+                    (candidate[0] == old[0] and candidate[1] < old[1])):
+                best[neighbour] = candidate
+                heapq.heappush(queue, (candidate[0], candidate[1] or "", neighbour))
+
+    return {node: value[0] for node, value in best.items() if node != source}
 
 
 def forwarding_table(graph, source):
@@ -48,7 +72,31 @@ def forwarding_table(graph, source):
     works, but think about what a router does when two shortest paths tie, and
     pick a rule. Say which in observation.md.
     """
-    raise NotImplementedError("implement the forwarding table")
+    if source not in graph:
+        return {}
+
+    best = {source: (0, None)}
+    queue = [(0, "", source)]
+    while queue:
+        cost, queued_hop, node = heapq.heappop(queue)
+        current_cost, current_hop = best[node]
+        if cost != current_cost or queued_hop != (current_hop or ""):
+            continue
+        for neighbour, weight in graph[node].items():
+            if neighbour == source:
+                continue
+            if weight < 0:
+                raise ValueError("Dijkstra requires non-negative link costs")
+            first_hop = neighbour if node == source else current_hop
+            candidate = (cost + weight, first_hop)
+            old = best.get(neighbour)
+            if (old is None or candidate[0] < old[0] or
+                    (candidate[0] == old[0] and candidate[1] < old[1])):
+                best[neighbour] = candidate
+                heapq.heappush(queue, (candidate[0], candidate[1] or "", neighbour))
+
+    return {node: hop for node, (_, hop) in best.items()
+            if node != source and hop is not None}
 
 
 def link_down(graph, a, b):
