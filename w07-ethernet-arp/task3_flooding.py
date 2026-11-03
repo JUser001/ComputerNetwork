@@ -72,8 +72,66 @@ class YourSwitch:
 
     BROADCAST = "ff:ff:ff:ff:ff:ff"
 
+    # How many stations we keep a popularity counter for, as a multiple of the
+    # table size. The counters are *evidence*, not forwarding entries: they are
+    # cheap, never used to forward, and bounded - so the switch's total memory
+    # is still a fixed multiple of `capacity`, whatever the network size.
+    EVIDENCE_FACTOR = 4
+
     def __init__(self, ports, capacity):
-        raise NotImplementedError("write your switch")
+        self.ports = ports
+        self.capacity = capacity
+        self.table = {}                      # mac -> port   (<= capacity)
+        self.limit = self.EVIDENCE_FACTOR * capacity
+        self.seen = {}                       # mac -> popularity (<= limit)
+
+    def _count(self, mac, keep=None):
+        """Bounded popularity counters (a frequency count with a fixed budget).
+
+        A tracked station just gets +1. When the counters are full, a newcomer
+        replaces the least popular tracked station and starts again from 1 - it
+        does NOT inherit the evicted count. (The classic Space-Saving rule does
+        inherit it; measured here, that lets a stream of forged one-off
+        addresses inflate its own counts until they look popular, and 45 of
+        them ended up in the table. Starting at 1 keeps them at 1.)
+
+        `keep` is a station that must not be pushed out by this call.
+        """
+        c = self.seen
+        if mac in c:
+            c[mac] += 1
+        elif len(c) < self.limit:
+            c[mac] = 1
+        else:
+            quiet = min((m for m in c if m != keep), key=c.get)
+            del c[quiet]
+            c[mac] = 1
 
     def handle(self, frame, in_port):
-        raise NotImplementedError
+        src, dst, now = frame
+
+        # Evidence: a station is "popular" if it is heard from OR asked for.
+        # Being asked for is the direct cost signal - a missing destination is
+        # exactly what gets flooded.
+        self._count(src)
+        if dst != self.BROADCAST:
+            self._count(dst, keep=src)       # asking for dst must not erase src
+
+        # Learn. A station we already hold is always refreshed (it may have
+        # moved - newest evidence wins). A newcomer is admitted only if there is
+        # room, or if it is strictly more popular than the entry it would evict.
+        # Ties and one-off talkers are declined: the table keeps what it has.
+        if src in self.table or len(self.table) < self.capacity:
+            self.table[src] = in_port
+        else:
+            weakest = min(self.table, key=lambda m: self.seen.get(m, 0))
+            if self.seen.get(src, 0) > self.seen.get(weakest, 0):
+                del self.table[weakest]
+                self.table[src] = in_port
+
+        # Forward. Declining to learn a source never loses a delivery: if its
+        # table entry is absent we flood, and flooding always reaches it.
+        if dst == self.BROADCAST or dst not in self.table:
+            return [p for p in range(self.ports) if p != in_port]
+        out = self.table[dst]
+        return [] if out == in_port else [out]

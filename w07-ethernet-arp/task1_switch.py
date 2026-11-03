@@ -30,7 +30,19 @@ class Switch:
     AGE_SECONDS = 300
 
     def __init__(self, ports):
-        raise NotImplementedError("write your switch")
+        self.ports = ports
+        self._table = {}        # mac -> (port, last_seen_time)
+        self._now = 0.0         # latest time we have been told about
+
+    def _expired(self, seen, now):
+        # "older than AGE_SECONDS" -> strictly greater; exactly 300s still lives
+        return now - seen > self.AGE_SECONDS
+
+    def _age_out(self, now):
+        dead = [m for m, (_, seen) in self._table.items()
+                if self._expired(seen, now)]
+        for m in dead:
+            del self._table[m]
 
     def handle(self, frame, in_port):
         """Learn from the source, then decide where the frame goes.
@@ -46,11 +58,27 @@ class Switch:
         Rule 5 is why a switch works at all before it has learned anything, and
         it is also what Task 3 is about.
         """
-        raise NotImplementedError
+        src, dst, now = frame
+        self._now = max(self._now, now)       # time only moves forward
+        self._age_out(self._now)              # distrust old evidence first
+
+        # 1. learn - newest evidence wins, so a moved station is simply
+        #    overwritten with its new port, and its timer restarts (R3)
+        self._table[src] = (in_port, now)
+
+        # 3 & 5. broadcast or unknown destination -> flood, minus arrival port
+        if dst == self.BROADCAST or dst not in self._table:
+            return [p for p in range(self.ports) if p != in_port]
+
+        # 4 & 2. known destination -> that one port, unless it is the way
+        #        the frame came in (then the frame is already where it belongs)
+        out = self._table[dst][0]
+        return [] if out == in_port else [out]
 
     def table(self):
         """{mac: port} as currently learned. Aged-out entries must be gone."""
-        raise NotImplementedError
+        self._age_out(self._now)
+        return {m: port for m, (port, _) in self._table.items()}
 
 
 # ------------------------------------------------------------------- harness
